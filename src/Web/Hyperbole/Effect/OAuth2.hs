@@ -27,7 +27,9 @@ module Web.Hyperbole.Effect.OAuth2
   ) where
 
 import Control.Monad (unless, when)
+import Crypto.Hash -- New import
 import Data.Aeson (FromJSON (..), Options (..), ToJSON (..), Value (..), defaultOptions, eitherDecode, genericParseJSON, genericToJSON)
+import Data.ByteArray.Encoding qualified as BA -- New import
 import Data.ByteString.Lazy qualified as BL
 import Data.Default
 import Data.Maybe (isJust)
@@ -35,6 +37,7 @@ import Data.String (IsString (..))
 import Data.String.Conversions (cs)
 import Data.Text (Text)
 import Data.Text qualified as T
+import Data.Text.Encoding qualified as T
 import Effectful
 import Effectful.Dispatch.Dynamic
 import Effectful.Environment
@@ -97,7 +100,7 @@ runOAuth2
 runOAuth2 cfg mgr = interpret $ \_ -> \case
   AuthUrl red scopes -> do
     state <- genRandomToken 6
-    let url = authorizationUrl cfg.authorize cfg.clientId red scopes state
+    let url = authorizationUrl cfg.authorize cfg.clientId cfg.codeChallenge red scopes state
     saveSession $ AuthFlow red state
     pure url
   ValidateCode -> do
@@ -105,26 +108,33 @@ runOAuth2 cfg mgr = interpret $ \_ -> \case
     validateRedirectParams flow
   ExchangeAuth authCode -> do
     flow <- session @AuthFlow
-    let params = tokenParams cfg.clientId cfg.clientSecret flow.redirect authCode
+    let params = tokenParams cfg.clientId cfg.codeVerifier flow.redirect authCode
     auth <- sendTokenRequest cfg mgr params
     deleteSession @AuthFlow
     pure auth
   ExchangeRefresh refToken -> do
-    let params = refreshParams cfg.clientId cfg.clientSecret refToken
+    let params = refreshParams cfg.clientId refToken
     sendTokenRequest cfg mgr params
 
 
 {- | read oauth config from env. This is not required, you can obtain these secrets another way
 and configure the app however you please. Just pass the results into runOAuth2 in your app
 -}
-getConfigEnv :: (Environment :> es) => Eff es Config
+getConfigEnv :: (Environment :> es, GenRandom :> es) => Eff es Config
 getConfigEnv = do
   clientId <- Token . cs <$> getEnv "OAUTH2_CLIENT_ID"
   clientSecret <- Token . cs <$> getEnv "OAUTH2_CLIENT_SECRET"
   authorize <- Endpoint <$> getEnvURI "OAUTH2_AUTHORIZE_ENDPOINT"
   token <- Endpoint <$> getEnvURI "OAUTH2_TOKEN_ENDPOINT"
-  pure $ Config{clientId, clientSecret, authorize, token}
+
+  -- According to the spec this is between 43 and 128 characters
+  -- '~', '-', '_', and '.' are allowed but not generated here
+  codeVerifier <- genRandomToken 128
+  let codeChallenge = hashWith SHA256 $ T.encodeUtf8 $ untok codeVerifier
+
+  pure $ Config{clientId, clientSecret, authorize, token, codeVerifier, codeChallenge}
  where
+  untok (Token x) = x
   getEnvURI n = do
     str <- getEnv n
     case parseURI str of
@@ -149,6 +159,7 @@ instance IsString Scopes where
 
 data ClientId
 data ClientSecret
+data CodeVerifier
 data Code
 data Refresh
 data Access
@@ -180,6 +191,8 @@ data Config = Config
   , clientSecret :: Token ClientSecret
   , authorize :: Endpoint Auth
   , token :: Endpoint (Token ())
+  , codeVerifier :: Token CodeVerifier
+  , codeChallenge :: Digest SHA256
   }
 
 
@@ -219,34 +232,36 @@ data OAuth2Error
 
 -- Lower level --------------------------------------------------
 
-authorizationUrl :: Endpoint Auth -> Token ClientId -> URI -> Scopes -> Token State -> URI
-authorizationUrl (Endpoint auth) (Token cid) redUrl (Scopes scopes) (Token state) =
+authorizationUrl :: Endpoint Auth -> Token ClientId -> Digest SHA256 -> URI -> Scopes -> Token State -> URI
+authorizationUrl (Endpoint auth) (Token cid) code redUrl (Scopes scopes) (Token state) =
   auth{uriQuery = cs $ renderQuery True authParams}
  where
+  dec = BA.convertToBase BA.Base64URLUnpadded code
   authParams =
     [ ("response_type", Just "code")
     , ("client_id", Just $ cs cid)
+    , ("code_challenge", Just dec)
+    , ("code_challenge_method", Just "S256")
     , ("redirect_uri", Just $ cs $ uriToText redUrl)
     , ("scope", Just $ cs $ T.intercalate " " scopes)
     , ("state", Just $ cs state)
     ]
 
 
-tokenParams :: Token ClientId -> Token ClientSecret -> URI -> Token Code -> Query
-tokenParams (Token cid) (Token sec) redUrl (Token ac) =
+tokenParams :: Token ClientId -> Token CodeVerifier -> URI -> Token Code -> Query
+tokenParams (Token cid) (Token ver) redUrl (Token ac) =
   [ ("grant_type", Just "authorization_code")
   , ("client_id", Just $ cs cid)
-  , ("client_secret", Just $ cs sec)
+  , ("code_verifier", Just $ cs ver)
   , ("redirect_uri", Just $ cs $ uriToText redUrl)
   , ("code", Just $ cs ac)
   ]
 
 
-refreshParams :: Token ClientId -> Token ClientSecret -> Token Refresh -> Query
-refreshParams (Token cid) (Token sec) (Token ref) =
+refreshParams :: Token ClientId -> Token Refresh -> Query
+refreshParams (Token cid) (Token ref) =
   [ ("grant_type", Just "refresh_token")
   , ("client_id", Just $ cs cid)
-  , ("client_secret", Just $ cs sec)
   , ("refresh_token", Just $ cs ref)
   ]
 
