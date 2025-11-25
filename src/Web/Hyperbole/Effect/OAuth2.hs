@@ -108,12 +108,12 @@ runOAuth2 cfg mgr = interpret $ \_ -> \case
     validateRedirectParams flow
   ExchangeAuth authCode -> do
     flow <- session @AuthFlow
-    let params = tokenParams cfg.clientId cfg.codeVerifier flow.redirect authCode
+    let params = tokenParams cfg.clientId cfg.clientSecret cfg.codeVerifier flow.redirect authCode
     auth <- sendTokenRequest cfg mgr params
     deleteSession @AuthFlow
     pure auth
   ExchangeRefresh refToken -> do
-    let params = refreshParams cfg.clientId refToken
+    let params = refreshParams cfg.clientId cfg.clientSecret refToken
     sendTokenRequest cfg mgr params
 
 
@@ -229,6 +229,12 @@ data OAuth2Error
   | OAuth2BadEnv String String
   deriving (Show, Exception)
 
+-----------------------------------------------------------------
+
+-- doJwsSign :: JWK -> L.ByteString -> IO (Either Error (GeneralJWS JWSHeader))
+-- doJwsSign jwk payload = runJOSE $ do
+--   alg <- bestJWSAlg jwk
+--   signJWS payload [(newJWSHeader (Protected, alg), jwk)]
 
 -- Lower level --------------------------------------------------
 
@@ -248,20 +254,22 @@ authorizationUrl (Endpoint auth) (Token cid) code redUrl (Scopes scopes) (Token 
     ]
 
 
-tokenParams :: Token ClientId -> Token CodeVerifier -> URI -> Token Code -> Query
-tokenParams (Token cid) (Token ver) redUrl (Token ac) =
+tokenParams :: Token ClientId -> Token ClientSecret -> Token CodeVerifier -> URI -> Token Code -> Query
+tokenParams (Token cid) (Token sec) (Token ver) redUrl (Token ac) =
   [ ("grant_type", Just "authorization_code")
   , ("client_id", Just $ cs cid)
+  , ("client_secret", Just $ cs sec)
   , ("code_verifier", Just $ cs ver)
   , ("redirect_uri", Just $ cs $ uriToText redUrl)
   , ("code", Just $ cs ac)
   ]
 
 
-refreshParams :: Token ClientId -> Token Refresh -> Query
-refreshParams (Token cid) (Token ref) =
+refreshParams :: Token ClientId -> Token ClientSecret -> Token Refresh -> Query
+refreshParams (Token cid) (Token sec) (Token ref) =
   [ ("grant_type", Just "refresh_token")
   , ("client_id", Just $ cs cid)
+  , ("client_secret", Just $ cs sec)
   , ("refresh_token", Just $ cs ref)
   ]
 

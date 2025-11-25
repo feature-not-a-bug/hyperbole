@@ -6,12 +6,15 @@ import Data.Maybe (fromMaybe)
 import Effectful
 import Effectful.Environment
 import Effectful.Exception
+import Network.Connection
 import Network.HTTP.Client qualified as HTTP
 import Network.HTTP.Client.TLS qualified as HTTPS
+import Network.TLS
 import Network.URI (parseURI)
 import Web.Hyperbole.Data.URI
 import Web.Hyperbole.Effect.OAuth2 (Config (..), Token (..))
 import Web.Hyperbole.Effect.OAuth2 qualified as OAuth2
+import Web.Hyperbole.Effect.GenRandom
 
 data App
 data AppConfig = AppConfig
@@ -20,15 +23,16 @@ data AppConfig = AppConfig
   , oauth :: OAuth2.Config
   }
 
-getAppConfigEnv :: (IOE :> es, Environment :> es) => Eff es AppConfig
+getAppConfigEnv :: (IOE :> es, Environment :> es, GenRandom :> es) => Eff es AppConfig
 getAppConfigEnv = do
   endpoint <- lookupEnvEndpoint "APP_ENDPOINT" -- default to localhost
-  manager <- HTTPS.newTlsManager
+  manager <- HTTPS.newTlsManagerWith $ HTTPS.mkManagerSettings (TLSSettingsSimple True False False defaultSupported) Nothing
+  cfg <- liftIO $ runEff $ runRandom $ runEnvironment $ OAuth2.getConfigEnv
   pure $
     AppConfig
       { endpoint = fromMaybe (Endpoint [uri|http://localhost:3000|]) endpoint
       , manager
-      , oauth = dummyOAuthConfig
+      , oauth = cfg
       }
 
 type Key = String

@@ -109,6 +109,9 @@ library
     , filepath >=1.4 && <2
     , http-api-data ==0.6.*
     , http-client ==0.7.*
+    , crypton
+    , memory
+    , jose
     , http-client-tls ==0.3.*
     , http-types ==0.12.*
     , network >=3.1 && <4

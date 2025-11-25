@@ -41,7 +41,7 @@ openLogin :: (Hyperbole :> es, OAuth2 :> es, Reader AppConfig :> es) => Eff es a
 openLogin = do
   Endpoint appRoot <- (.endpoint) <$> ask @AppConfig
   let redirectUrl = appRoot ./. routePath Route.OAuth2Authenticate
-  u <- OAuth2.authUrl redirectUrl "email"
+  u <- OAuth2.authUrl redirectUrl "email openid"
   redirect u
 
 logout :: (Hyperbole :> es) => Eff es ()
@@ -65,7 +65,7 @@ data GithubUserInfo = GithubUserInfo
 fetchUserInfo :: (IOE :> es, Reader AppConfig :> es, Hyperbole :> es) => Token Access -> Eff es GithubUserInfo
 fetchUserInfo (Token accessTok) = do
   app <- ask @AppConfig
-  req <- HTTP.parseRequest "https://oauth-mock.mock.beeceptor.com/userinfo/github"
+  req <- HTTP.parseRequest "https://localhost:8443/realms/qa/protocol/openid-connect/userinfo"
   res <- liftIO (HTTP.httpLbs (HTTP.applyBearerAuth (cs accessTok) req) app.manager)
   case eitherDecode @GithubUserInfo (HTTP.responseBody res) of
     Left e -> respondError $ ErrAuth $ "Could not parse user info: " <> pack (show e)

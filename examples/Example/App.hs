@@ -101,7 +101,7 @@ run = do
   (count, chats, config) <- runEff $ runEnvironment $ do
     c <- runConcurrent Effects.initCounter
     ct <- runConcurrent Chat.initChats
-    a <- getAppConfigEnv
+    a <- runRandom getAppConfigEnv
     pure (c, ct, a)
 
   cache <- clientCache

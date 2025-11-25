@@ -108,6 +108,9 @@ executable examples
     , atomic-css
     , base
     , bytestring
+    , crypton
+    , crypton-connection
+    , memory
     , casing
     , containers
     , cookie
@@ -115,6 +118,7 @@ executable examples
     , effectful
     , file-embed
     , foreign-store
+    , tls
     , http-api-data
     , http-client
     , http-client-tls
